@@ -62,7 +62,7 @@ def monitor_the_job(qid, wanted, io_stream_info):
     vertices_parallels = [v['parallelism'] for v in vertices]
     
     vids, vmetricses = fetch_job_vertice_metrics(vertices, jid)
-    monitored_metrics = sta_job_vertice_metric_values(wanted, jid, vids, vmetricses, interval=6, itrs=15)
+    monitored_metrics = sta_job_vertice_metric_values(wanted, jid, vids, vmetricses, interval=6, itrs=20)
 
     data = []
     v_num = len(vids)
@@ -81,14 +81,15 @@ def monitor_the_job(qid, wanted, io_stream_info):
     return data
 
 def main():
-    # monitor vertex-level metrics for the running job, append data-rows into .csv file
+    # Monitor vertex-level metrics for the running job, 
+    # append data-rows into .csv file as a tabular dataset
     # argv:     prog,   qid,    o_path,
     # argidx:   0,      1,      2,
     cmdargs = sys.argv
     qid = int(cmdargs[1][1:]) # q8 -> (int)8
     o_path = cmdargs[2]
 
-    sleep(20)   # wait metric servers warmup
+    sleep(25)   # wait metric servers warmup
 
     # identify the wanted metrics here
     # TODO: move this part to a conf file
@@ -116,4 +117,5 @@ def main():
         header = make_header(wanted)
     write_csv(o_path, data, header)
 
-main()
+if __name__ == "__main__":
+    main()
