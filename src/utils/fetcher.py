@@ -221,7 +221,7 @@ def sta_job_everything(jobId, jmeta, interval=6, itrs=20,
         for ver_i in range(len(vers)):
             # for each vertex collect:
             vertex_data = {} # will append into the vertice data
-            ver = vers[ver_i]
+            ver = vers[ver_i] # these steps guarantees the order of vertices in vertice-level is same as in job meta
             vertexId = ver['id']
             vparallel = ver['parallelism']
             
