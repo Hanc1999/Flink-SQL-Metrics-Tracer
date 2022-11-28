@@ -20,9 +20,18 @@ class sequential_cleaner:
         if self.wanted_job_meta:
             res += self.wanted_job_meta
         if self.wanted_job_level:
-            res += self.wanted_job_level
+            tmp = []
+            for e in self.wanted_job_level:
+                if e != 'pseudoSrcInputRate':
+                    tmp.append(e)
+                    continue
+                tmp += ['pseudoSrcNumBytesInPerSecond', 'pseudoSrcNumRecordsInPerSecond']
+            res += tmp
         if self.wanted_vertex:
-            res += ['vertex_id']
+            if self.wanted_vertex == 'idx':
+                res += ['vertex_idx']
+            else:
+                res += ['vertex_id']
         if self.wanted_vertex_level:
             res += self.wanted_vertex_level
         if self.wanted_sb_level:
@@ -33,7 +42,8 @@ class sequential_cleaner:
     def get_head(self,):
         return self.head
     
-    def help_select_wanted(self, attr_dict, want_list, sub_key = 'value'):
+    def help_select_wanted(self, attr_dict, want_list, sub_key = 'value', m_num = None):
+        feasible_target = len(want_list) if not m_num else m_num
         res = []
         feasible_counter = 0
         for k in want_list:
@@ -45,7 +55,7 @@ class sequential_cleaner:
                     res.append(attr_dict[k])
             else:
                 break
-        if feasible_counter < len(want_list):
+        if feasible_counter < feasible_target:
             # means not all wanted is here, so skip
             return []
         return res
@@ -56,21 +66,61 @@ class sequential_cleaner:
     def make_job_meta_attributes(self, job_metrics):
         return self.help_select_wanted(job_metrics['job_meta_info'], self.wanted_job_meta, '')
     
+    def make_job_level_pseudoSrcInputRate(self, job_metrics):
+        # observe the 'sum' of first vertex's ‘numBytesOutPerSecond’ and 'numRecordsInPerSecond' per second
+        first_vertex = job_metrics['vertice_metrics'][0]
+        vid = first_vertex['vertex_id']
+        # for debug
+        assert 'Source' in job_metrics['job_meta_info']['vertices'][0]['name'] and vid == job_metrics['job_meta_info']['vertices'][0]['id'], 'err..fuck'
+
+        return [first_vertex['vertex_level_metrics']['numBytesOutPerSecond']['sum'],
+               first_vertex['vertex_level_metrics']['numRecordsOutPerSecond']['sum'],]
+    
+    def make_job_level_jobIsBackPressured(self, job_metrics):
+        # observe all subtasks to see any is back-pressured
+        isBackPressured = False
+        for v in job_metrics['vertice_metrics']:
+            for sb in v['sub_level_metrics']:
+                if sb['isBackPressured']['value'] == 'true':
+                    isBackPressured = True
+                    break
+            if isBackPressured:
+                break
+        return str(isBackPressured)
+    
+    def make_job_level_jobVerParallelisms(self, job_metrics):
+        res = []
+        for v in job_metrics['job_meta_info']['vertices']:
+            res.append(v['parallelism'])
+        return str(res)
+    
     def make_job_level_attributes(self, job_metrics):
         # TODO: needs further config info
+        # no feasible protection for job-level metrics collection, be careful
         res = []
-        job_metrics['job_level_metrics']
-        for k,v in job_metrics.items():
-            if k in self.wanted_job_level:
+        # 2 special attributes: (1) pseudoSrcInputRate, (2) jobIsBackPressured
+        for k in self.wanted_job_level:
+            if k in job_metrics['job_level_metrics'].keys():
                 res.append(max([e['value'] for e in v.values()]))
+            # special job-level metrics
+            elif  k == 'pseudoSrcInputRate':
+                res += self.make_job_level_pseudoSrcInputRate(job_metrics) # returns 2 values
+            elif k == 'jobIsBackPressured':
+                res.append(self.make_job_level_jobIsBackPressured(job_metrics))
+            elif k == 'jobVerParallelisms':
+                res.append(self.make_job_level_jobVerParallelisms(job_metrics))
+
         return res
+
     
     def make_ver_level_attributes(self, job_metrics):
         dicts1 = job_metrics['job_meta_info']['vertices']
         dicts2 = job_metrics['vertice_metrics']
+        wanted_list1 = [e for e in self.wanted_vertex_level if e in dicts1[0].keys()]
+        wanted_list2 = [e for e in self.wanted_vertex_level if e not in wanted_list1]
         v_num = len(dicts1)
-        res1 = [self.help_select_wanted(dicts1[i], self.wanted_vertex_level, '') for i in range(v_num)]
-        res2 = [self.help_select_wanted(dicts2[i]['vertex_level_metrics'], self.wanted_vertex_level, 'avg') for i in range(v_num)]
+        res1 = [self.help_select_wanted(dicts1[i], wanted_list1, '') for i in range(v_num)]
+        res2 = [self.help_select_wanted(dicts2[i]['vertex_level_metrics'], wanted_list2, 'avg') for i in range(v_num)]
         res = []
         for i in range(v_num):
             res.append(res1[i] + res2[i])
@@ -86,7 +136,6 @@ class sequential_cleaner:
         return res # 3-d array
     
     def assemble_rows(self, sub_rows_1=[], sub_rows_2=[], sub_rows_3=[]):
-        # TODO: risky function, not robust yet
         res = [] # collected samples
         
         sub_rows_1_combined = []
@@ -101,20 +150,33 @@ class sequential_cleaner:
             sub_rows_2_combined.append(tmp)
         
         # sub_rows_3_combined do not need to re-assemble
-        
         # assumes there must be sub-task level metrics: (or, sub_rows_3 is not empty)
-        for i in range(len(sub_rows_3)): # i->vertex
-            for j in range(len(sub_rows_3[i])): # j->subtask
-                a_sample = []
-                a_sample += sub_rows_1_combined
-                if sub_rows_2_combined:
-                    sbr = sub_rows_2_combined[i]
+        if sub_rows_3:
+            for i in range(len(sub_rows_3)): # i->vertex
+                for j in range(len(sub_rows_3[i])): # j->subtask
+                    a_sample = []
+                    a_sample += sub_rows_1_combined
+                    if sub_rows_2_combined:
+                        sbr = sub_rows_2_combined[i]
+                        if not sbr: continue
+                        a_sample += sbr
+                    sbr = sub_rows_3[i][j]
                     if not sbr: continue
                     a_sample += sbr
-                sbr = sub_rows_3[i][j]
-                if not sbr: continue
-                a_sample += sbr
+                    res.append(a_sample)
+        elif sub_rows_2:
+            # in the case no subtask-level records
+            for i in range(len(sub_rows_2_combined)):
+                a_sample = []
+                a_sample += sub_rows_1_combined
+                vtr = sub_rows_2_combined[i]
+                if not vtr: continue
+                a_sample += vtr
                 res.append(a_sample)
+        else:
+            # if only need job-level records
+            res = [sub_rows_1_combined]
+
         return res # return a set of tabular samples
     
     def clean_row(self, row):
@@ -141,7 +203,10 @@ class sequential_cleaner:
             sub_rows_1.append(job_level_attrs)
         
         if self.wanted_vertex:
-            ver_attrs = [[e['vertex_id']] for e in job_metrics['vertice_metrics']]
+            if self.wanted_vertex == 'idx':
+                ver_attrs = [[i] for i in range(len(job_metrics['vertice_metrics']))]
+            else:
+                ver_attrs = [[e['vertex_id']] for e in job_metrics['vertice_metrics']]
             sub_rows_2.append(ver_attrs)
         if self.wanted_vertex_level:
             ver_level_attrs = self.make_ver_level_attributes(job_metrics)
@@ -151,7 +216,7 @@ class sequential_cleaner:
             sb_level_attrs = self.make_sb_level_attributes(job_metrics['vertice_metrics'])
             sub_rows_3.append(sb_level_attrs)
 
-        res = self.assemble_rows(sub_rows_1, sub_rows_2, sub_rows_3[0])
+        res = self.assemble_rows(sub_rows_1, sub_rows_2, sub_rows_3[0] if len(sub_rows_3)>=1 else [])
 
         self.dataset += res
         return row
