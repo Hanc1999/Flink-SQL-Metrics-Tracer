@@ -76,10 +76,13 @@ class sequential_cleaner:
         return [first_vertex['vertex_level_metrics']['numBytesOutPerSecond']['sum'],
                first_vertex['vertex_level_metrics']['numRecordsOutPerSecond']['sum'],]
     
-    def make_job_level_jobIsBackPressured(self, job_metrics):
-        # observe all subtasks to see any is back-pressured
+    def make_job_level_jobIsBackPressured(self, job_metrics, specific_v=[]):
+        # observe all subtasks to see any is back-pressured, specific_v is vertices indice
         isBackPressured = False
-        for v in job_metrics['vertice_metrics']:
+        for vi in range(len(job_metrics['vertice_metrics'])):
+            if specific_v and vi not in specific_v:
+                continue
+            v = job_metrics['vertice_metrics'][vi]
             for sb in v['sub_level_metrics']:
                 if sb['isBackPressured']['value'] == 'true':
                     isBackPressured = True
@@ -87,7 +90,14 @@ class sequential_cleaner:
             if isBackPressured:
                 break
         return str(isBackPressured)
-    
+
+    def make_job_level_srcBPTime(self, job_metrics,):
+        # observe the source's avg bp time (ms) per second (soft+hard)
+        sum_bp_time = 0
+        v = job_metrics['vertice_metrics'][0]
+        # return v['vertex_level_metrics']['backPressuredTimeMsPerSecond']['avg']
+        return v['vertex_level_metrics']['hardBackPressuredTimeMsPerSecond']['avg']
+
     def make_job_level_jobVerParallelisms(self, job_metrics):
         res = []
         for v in job_metrics['job_meta_info']['vertices']:
@@ -103,15 +113,17 @@ class sequential_cleaner:
             if k in job_metrics['job_level_metrics'].keys():
                 res.append(max([e['value'] for e in v.values()]))
             # special job-level metrics
-            elif  k == 'pseudoSrcInputRate':
+            elif k == 'pseudoSrcInputRate':
                 res += self.make_job_level_pseudoSrcInputRate(job_metrics) # returns 2 values
             elif k == 'jobIsBackPressured':
                 res.append(self.make_job_level_jobIsBackPressured(job_metrics))
+            elif k == 'sourceIsBackPressured':
+                res.append(self.make_job_level_jobIsBackPressured(job_metrics, [0]))
             elif k == 'jobVerParallelisms':
                 res.append(self.make_job_level_jobVerParallelisms(job_metrics))
-
+            elif k == 'srcBPTime':
+                res.append(self.make_job_level_srcBPTime(job_metrics))
         return res
-
     
     def make_ver_level_attributes(self, job_metrics):
         dicts1 = job_metrics['job_meta_info']['vertices']
